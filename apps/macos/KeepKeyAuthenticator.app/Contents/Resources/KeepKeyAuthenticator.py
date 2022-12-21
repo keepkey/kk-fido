@@ -17,15 +17,14 @@
 #
 # The script has been modified for KeepKey Device.
 
-from PyQt5 import QtWidgets, uic
-from PyQt5.QtWidgets import QFileDialog, QMenuBar,QAction,QMessageBox,QPushButton
-from PyQt5.QtGui import *
-from PyQt5 import QtCore
+from PyQt6 import QtWidgets, uic
+from PyQt6.QtWidgets import QFileDialog, QMenuBar,QMessageBox,QPushButton
+from PyQt6.QtGui import *
+from PyQt6 import QtCore
 import sys
 import os
 from PIL import Image
 from pyzbar.pyzbar import decode
-import qdarkgraystyle
 import qrcode
 import time
 from urllib.parse import urlparse
@@ -44,10 +43,10 @@ from keepkeylib.client import PinException, ProtocolMixin, BaseClient, CallExcep
 from keepkeylib import types_pb2 as types
 
 
-from AuthMain import Ui_MainWindow as Ui
-from PinUi import Ui_Dialog as PIN_Dialog
+from authmain import Ui_MainWindow as Ui
+from pindialog import Ui_Dialog as PIN_Dialog
 from remaccdialog import Ui_RemAccDialog as RemAcc_Dialog
-from addaccui import Ui_AddAccDialog as AddAcc_Dialog
+from addaccdialog import Ui_AddAccDialog as AddAcc_Dialog
 from manualaddacc import Ui_ManualAddAccDialog as ManAddAcc_Dialog
 
 # for dev testing
@@ -111,11 +110,9 @@ def error_popup(errmsg, infotext):
     # set up error/status message box popup
     msg = QMessageBox()
     msg.setWindowTitle("ERROR")
-    msg.setIcon(QMessageBox.Critical)
-    msg.setDefaultButton(QMessageBox.Ok)
     msg.setText(errmsg)
     msg.setInformativeText(infotext)
-    x = msg.exec_()    # show message box
+    x = msg.exec()    # show message box
 
 class PIN_Dialog(PIN_Dialog):
     def setupUi(self, Dialog):
@@ -160,7 +157,7 @@ def pingui_popup():
     PIN_ui = PIN_Dialog()
     PIN_ui.setupUi(PINDialog)
     PINDialog.show()
-    x = PINDialog.exec_()    # show pin dialog
+    x = PINDialog.exec()    # show pin dialog
     if PIN_ui.getUnlockClicked() == True:
         pin = PIN_ui.getEncodedPin()
         if _test: print(pin)
@@ -339,10 +336,10 @@ class AddAcc_Dialog(AddAcc_Dialog):
             self.Dialog.close()
             return
         ManAddAccDialog.show()
-        x = ManAddAccDialog.exec_()    # show dialog
+        x = ManAddAccDialog.exec()    # show dialog
         domain, account, secret = ManAddAcc_ui.getManAuth()
         if None in (domain, account, secret):
-            error_popup('Must enter values for domain, account and secret')
+            error_popup('Must enter values for domain, account and secret', '')
         else:
             self.KKAddAcc(self.client, secret, domain, account)
 
@@ -453,7 +450,7 @@ class Ui(Ui):
             self.KKDisconnect()
             return
         AddAccDialog.show()
-        x = AddAccDialog.exec_()    # show pin dialog
+        x = AddAccDialog.exec()    # show pin dialog
         self.getAccounts(client)   
 
     def OtpGen(self, id_):
@@ -494,7 +491,7 @@ class Ui(Ui):
             self.KKDisconnect()
             return
         RemAccDialog.show()
-        x = RemAccDialog.exec_()    # show pin dialog
+        x = RemAccDialog.exec()    # show pin dialog
         self.getAccounts(client)   
         
     def Test(self):
@@ -530,6 +527,7 @@ class AuthClass:
 
         
     def auth_accAdd(self, client, secret, domain, account):
+        print(b'\x15' + bytes("initializeAuth:"+domain+":"+account+":"+secret, 'utf8'))
         retval, err = self.sendMsg(client, msg = b'\x15' + bytes("initializeAuth:"+domain+":"+account+":"+secret, 'utf8'))
         if err == 'Authenticator secret storage full':
             error_popup(err, "Need to remove an account to add a new one to this KeepKey")
@@ -544,16 +542,13 @@ class AuthClass:
             
     def auth_otp(self, client, domain, account):
         interval = 30       # 30 second interval
-        #T0 = 1535317397
-        #T0 = 1536262427
         T0 = datetime.now().timestamp()
         Tslice = int(T0/interval)
-        Tremain = int((int(T0) - Tslice*30))
+        Tremain = interval - int((int(T0) - Tslice*30))
         if _test: print(Tremain)
-        T = Tslice.to_bytes(8, byteorder='big')
         retval, err = self.sendMsg(client, 
             msg = b'\x16' + bytes("generateOTPFrom:"+domain+":"+account+":", 'utf8') + 
-                                    binascii.hexlify(bytearray(T)) + bytes(":" + str(Tremain), 'utf8')
+                                    bytes(str(Tslice), 'utf8') + bytes(":" + str(Tremain), 'utf8')
         )
         if err in authErrs: 
             error_popup(err, '')
@@ -603,7 +598,7 @@ class AuthClass:
         for msg in (
             b'\x15' + bytes("initializeAuth:"+"KeepKey"+":"+"markrypto"+":"+"ZKLHM3W3XAHG4CBN", 'utf8'),
             b'\x15' + bytes("initializeAuth:"+"Shapeshift"+":"+"markrypto"+":"+"BASE32SECRET2345AB", 'utf8'),
-            b'\x15' + bytes("initializeAuth:"+"Shapeshift"+":"+"markrypto"+":"+"BASE32SECRET2345AB", 'utf8')
+            b'\x15' + bytes("initializeAuth:"+"KeepKey"+":"+"markrypto2"+":"+"BASE32SECRET2345AD", 'utf8')
             ):
             retval, err = self.sendMsg(client, msg)
             if err == 'Authenticator secret storage full':
@@ -634,7 +629,7 @@ def main():
     MainWindow = QtWidgets.QMainWindow()
     ui = Ui()
     ui.setupUi(MainWindow)
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
     
 if __name__ == '__main__':
     main()
