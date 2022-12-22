@@ -17,6 +17,8 @@
 #
 # The script has been modified for KeepKey Device.
 
+__version__ = "0.5.0"
+
 from PyQt6 import QtWidgets, uic
 from PyQt6.QtWidgets import QFileDialog, QMenuBar,QMessageBox,QPushButton
 from PyQt6.QtGui import *
@@ -87,7 +89,7 @@ class kkClient:
 
         # Creates object for manipulating KeepKey
         self.client = KeepKeyClientAuth(transport)
-        self.requires_firmware("7.7.0")
+        self.requires_firmware("7.6.0")
         
 
     def requires_firmware(self, ver_required):
@@ -354,9 +356,12 @@ class Ui(Ui):
 
     def setupUi(self, MainWindow):
         super(Ui, self).setupUi(MainWindow)
-        
+        _translate = QtCore.QCoreApplication.translate
+
         self.clientOps = kkClient()
-        
+        versionText = "Version %s" % __version__
+        self.Version.setText(_translate("MainWindow", versionText))
+
         self.ConnectKKButton.clicked.connect(self.KKConnect)
         self.AddAccButton.clicked.connect(self.addAcc)
         self.RemoveAccButton.clicked.connect(self.removeAcc)
