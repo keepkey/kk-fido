@@ -1,6 +1,4 @@
-# This file is part of the TREZOR project.
-#
-# Copyright (C) 2022 markrypto
+# Copyright (C) 2023 markrypto
 #
 # This library is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Lesser General Public License as published by
@@ -50,13 +48,15 @@ from pindialog import Ui_Dialog as PIN_Dialog
 from remaccdialog import Ui_RemAccDialog as RemAcc_Dialog
 from addaccdialog import Ui_AddAccDialog as AddAcc_Dialog
 from manualaddacc import Ui_ManualAddAccDialog as ManAddAcc_Dialog
+from passphrasedialog import Ui_PassphraseDialog as Passphrase_Dialog
 
-# for dev testing
+# logs for dev testing
 _test = False
 
 authErrs = ('Invalid PIN', 'PIN Cancelled', 'PIN expected', 'Auth secret unknown error', 
                          'Account name missing or too long, or seed/message string missing', 
-                         'Authenticator secret can\'t be decoded', 'Authenticator secret seed too large')
+                         'Authenticator secret can\'t be decoded', 'Authenticator secret seed too large',
+                         'passphrase incorrect for authdata')
 class kkClient:
     def __init__(self):
         self.client = None
@@ -105,8 +105,9 @@ class kkClient:
         return self.client
 
     def closeClient(self):
-        self.client.close()
-        self.client=None
+        if self.client != None:
+            self.client.close()
+            self.client=None
 
 def error_popup(errmsg, infotext):
     # set up error/status message box popup
@@ -166,6 +167,47 @@ def pingui_popup():
         return pin
     else:
         return 'E'  # pin cancelled
+
+def passphrase_popup():
+    # set up passphrase dialog        
+    passphraseDialog = QtWidgets.QDialog()
+    passphrase_ui = Passphrase_Dialog()
+    passphrase_ui.setupUi(passphraseDialog)
+    passphraseDialog.show()
+    x = passphraseDialog.exec()    # show pin dialog
+    if passphrase_ui.getEnterClicked() == True:
+        passphrase = passphrase_ui.getPassphrase()
+        if _test: print(passphrase)
+        return passphrase
+    else:
+        return 'E'  # passphrase canceled
+
+class Passphrase_Dialog(Passphrase_Dialog):
+    def __init__(self):
+        self.KKDisconnect = False
+        self.passphrase = None
+        self.enterClicked = False
+        return
+
+    def setupUi(self, Dialog):
+        super(Passphrase_Dialog, self).setupUi(Dialog)
+        self.Dialog = Dialog
+        self.EnterButton.clicked.connect(self.Enter)
+        
+    def Enter(self):
+        self.passphrase = self.passphraseLineEdit.text()
+        self.enterClicked = True
+        self.Dialog.close()
+        
+    def getEnterClicked(self):
+        return self.enterClicked
+    
+    def getPassphrase(self):
+        return self.passphrase
+
+    def getKKDisconnect(self):
+        return self.KKDisconnect
+
 
 class RemAcc_Dialog(RemAcc_Dialog):
     def __init__(self, client, authOps):
@@ -292,14 +334,27 @@ class AddAcc_Dialog(AddAcc_Dialog):
         if (data == []):
             error_popup("QR Code Error", "Could not read QR code")
             return
-        data1 = str(data[0][0]).replace("b'",'').replace("'","")
+        rawdata = str(data[0][0]).replace("b'",'').replace("'","")
         type1 = str(data[0][1])
-        if _test: print(data1)
+        if _test: print(rawdata)
         if _test: print(type1)
-        secret = urlparse(data1).query.split('=')[1].split('&')[0]
-        domain = urlparse(data1).path.split('/')[1].split(':')[0]
-        account = urlparse(data1).path.split('/')[1].split(':')[1]
         
+        
+        unqData = urllib.parse.unquote(rawdata)     # replace any %xx escapes with single char equivalent
+        # parse check
+        pUrl = urlparse(unqData)
+        if pUrl.scheme == 'otpauth' and pUrl.netloc == 'totp':
+            try:
+                secret = pUrl.query.split('=')[1].split('&')[0]
+                domain = pUrl.path.split('/')[1].split(':')[0]
+                account = pUrl.path.split('/')[1].split(':')[1]
+            except (IndexError, ValueError):
+                error_popup("QR Code Parse Error", ("Could not parse %s" % unqData))
+                return
+        else:
+            error_popup("QR Code Error", ("invalid otpauth url\n%s" % unqData))
+            return
+
         self.KKAddAcc(self.client, secret, domain, account)
         return
         
@@ -365,6 +420,7 @@ class Ui(Ui):
         self.ConnectKKButton.clicked.connect(self.KKConnect)
         self.AddAccButton.clicked.connect(self.addAcc)
         self.RemoveAccButton.clicked.connect(self.removeAcc)
+        self.WipeAccButton.clicked.connect(self.wipeData)
         if _test:
             self.testButton.clicked.connect(self.Test)
         else:
@@ -398,6 +454,8 @@ class Ui(Ui):
             self.ConnectKKButton.setText(_translate("MainWindow", "KeepKey\nConnected"))
             # get accounts if connected
             self.getAccounts(client)
+        else:
+            self.KKDisconnect()
             
     def KKDisconnect(self):
         self.accounts = None
@@ -414,8 +472,12 @@ class Ui(Ui):
             
     def getAccounts(self, client):
         self.accounts, err = self.authOps.auth_accGet(client)
+        if _test:print("get accounts err: "+err)
         if err in ('Invalid PIN', 'PIN Cancelled', 'PIN expected', 'usb err', 'Device not initialized'):
             self.KKDisconnect()
+            return
+        if (err == 'passphrase incorrect for authdata'):
+            self.clearAccounts()
             return
         
         if _test: print(self.accounts)
@@ -499,6 +561,20 @@ class Ui(Ui):
         x = RemAccDialog.exec()    # show pin dialog
         self.getAccounts(client)   
         
+    def wipeData(self):
+        client = self.clientOps.getClient()
+
+        if (client != None):
+            try:
+                self.authOps.auth_wipe(client)
+                self.KKDisconnect() # disconnect and reestablish 
+            except PinException as e:
+                error_popup("Invalid PIN", "")
+            return
+        else:
+            error_popup('Keepkey not connected', '')
+            return
+ 
     def Test(self):
         #test the keepkey function
         client = self.clientOps.getClient()
@@ -550,7 +626,8 @@ class AuthClass:
         T0 = datetime.now().timestamp()
         Tslice = int(T0/interval)
         Tremain = interval - int((int(T0) - Tslice*30))
-        if _test: print(Tremain)
+        if _test: print(b'\x16' + bytes("generateOTPFrom:"+domain+":"+account+":", 'utf8') + 
+                                    bytes(str(Tslice), 'utf8') + bytes(":" + str(Tremain), 'utf8'))
         retval, err = self.sendMsg(client, 
             msg = b'\x16' + bytes("generateOTPFrom:"+domain+":"+account+":", 'utf8') + 
                                     bytes(str(Tslice), 'utf8') + bytes(":" + str(Tremain), 'utf8')
@@ -561,6 +638,9 @@ class AuthClass:
         elif err != '':
             error_popup(err, '')
             return 'usb err'
+        
+        if _test: print("OTP return: "+retval)
+        
         return 'noerr'
     
     def auth_accGet(self, client):
@@ -598,12 +678,24 @@ class AuthClass:
 
         return 'noerr'
 
+    def auth_wipe(self, client):
+        retval, err = self.sendMsg(client, msg = b'\x19' + bytes("wipeAuthdata:", 'utf8'))
+        if err in authErrs:
+            error_popup(E.args[1])
+        elif err != '':
+            error_popup(err, '')
+            return 'usb err'
+
+        return 'noerr'
+
     def auth_test(self, client):
         # otpauth://totp/KeepKey:markrypto?secret=ZKLHM3W3XAHG4CBN&issuer=kk
         for msg in (
             b'\x15' + bytes("initializeAuth:"+"KeepKey"+":"+"markrypto"+":"+"ZKLHM3W3XAHG4CBN", 'utf8'),
             b'\x15' + bytes("initializeAuth:"+"Shapeshift"+":"+"markrypto"+":"+"BASE32SECRET2345AB", 'utf8'),
-            b'\x15' + bytes("initializeAuth:"+"KeepKey"+":"+"markrypto2"+":"+"BASE32SECRET2345AD", 'utf8')
+            b'\x15' + bytes("initializeAuth:"+"KeepKey"+":"+"markrypto2"+":"+"JBSWY3DPEHPK3PXP", 'utf8'),
+            # 160-bit key
+            b'\x15' + bytes("initializeAuth:"+"Google"+":"+"novicecoingroup"+":"+"liabmylfzm3qta2txzqgcunbp3y76pkb", 'utf8')
             ):
             retval, err = self.sendMsg(client, msg)
             if err == 'Authenticator secret storage full':
